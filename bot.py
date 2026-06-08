@@ -2,8 +2,8 @@ import sqlite3
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
-TOKEN = "PUT_BOT_TOKEN_HERE"
-ADMIN_ID = 123456789
+TOKEN = "8571936857:AAFb0c4snxxNaNPh46txsbpNhfiR2st-tGg"
+ADMIN_ID = 8767998937
 
 REGISTER_LINK = "https://4yaarwin.com/#/register?invitationCode=18426755757"
 SUPPORT_ID = "@hackii_sureshote"
