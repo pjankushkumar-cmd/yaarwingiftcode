@@ -1,13 +1,26 @@
 import sqlite3
+import threading
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
+# --- CONFIGURATION ---
 TOKEN = "8571936857:AAFb0c4snxxNaNPh46txsbpNhfiR2st-tGg"
 ADMIN_ID = 8767998937
-
 REGISTER_LINK = "https://4yaarwin.com/#/register?invitationCode=18426755757"
 SUPPORT_ID = "@hackii_sureshote"
 
+# --- FLASK SERVER (TO PREVENT SLEEP) ---
+app_flask = Flask(__name__)
+
+@app_flask.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    app_flask.run(host="0.0.0.0", port=8080)
+
+# --- BOT LOGIC ---
 def init_db():
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
@@ -81,6 +94,10 @@ async def users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     init_db()
+    
+    # Start Flask in a separate thread
+    threading.Thread(target=run_flask).start()
+    
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("users", users))
