@@ -1,30 +1,49 @@
 import sqlite3
 import threading
 import asyncio
+import os
+import requests
+import time
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 from telegram.error import TelegramError
 
 TOKEN = "8571936857:AAFb0c4snxxNaNPh46txsbpNhfiR2st-tGg"
-ADMIN_ID = 8767998937  # Aapki Telegram User ID
+ADMIN_ID = 8767998937  # Aapki sahi numerical Telegram ID
 
 REGISTER_LINK = "https://4yaarwin.com/#/register?invitationCode=18426755757"
 SUPPORT_ID = "@hackii_sureshote"
+
+# Render URL yahan daalein taaki anti-sleep ping kaam kare (e.g., "https://your-app.onrender.com")
+RENDER_APP_URL = "https://yaarwingiftcode-94p2.onrender.com" 
 
 app_flask = Flask(__name__)
 
 @app_flask.route("/")
 def home():
-    return "Bot is running!"
+    return "Bot is running 24/7!"
 
 def run_flask():
     app_flask.run(host="0.0.0.0", port=8080)
 
+# SITE KO SLEEP HONE SE BACHANE KE LIYE PING LOGIC (PIN SYSTEM)
+def ping_server():
+    if not RENDER_APP_URL or "your-bot-link" in RENDER_APP_URL:
+        print("⚠️ Anti-Sleep active karne ke liye RENDER_APP_URL set karein.")
+        return
+    time.sleep(30) # Bot chalu hone ke thodi der baad shuru karein
+    while True:
+        try:
+            requests.get(RENDER_APP_URL)
+            print("🚀 Anti-Sleep Ping Sent! Site is Awake.")
+        except Exception as e:
+            print(f"❌ Ping failed: {e}")
+        time.sleep(300) # Har 5 minute (300 seconds) me ping karega
+
 def init_db():
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
-    # Users table me status column add kiya hai (active / blocked)
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             telegram_id INTEGER PRIMARY KEY, 
@@ -34,18 +53,57 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+    
+    # RESTART SE BACHNE KA JUGAAD: Text file se purane users wapas database me load karein
+    if os.path.exists("backup_users.txt"):
+        conn = sqlite3.connect("bot.db")
+        c = conn.cursor()
+        with open("backup_users.txt", "r") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    parts = line.split(",")
+                    tid = int(parts[0])
+                    uid = parts[1] if len(parts) > 1 else ""
+                    c.execute("INSERT OR IGNORE INTO users (telegram_id, uid, status) VALUES (?, ?, 'active')", (tid, uid))
+        conn.commit()
+        conn.close()
 
 # ---------------- USER SIDE FLOW ----------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # User ko database me active insert/update karein
+    # 1. Sabse pehle strict check ki kya user admin hai
+    if int(user_id) == int(ADMIN_ID):
+        await update.message.reply_text(
+            "📊 *WELCOME TO ADMIN DASHBOARD*\n\n"
+            "Aapka admin panel active hai.\n\n"
+            "Commands:\n"
+            "🔹 `/stats` - Total Active/Blocked Members dekhne ke liye\n"
+            "🔹 `/broadcast` - Sabhi ko media/text bhejne ke liye\n\n"
+            "ℹ️ _Kisi bhi member ke message par Reply karke use direct msg bhej sakte hain._",
+            parse_mode="Markdown"
+        )
+        return
+
+    # 2. Agar normal member hai to data save karein (Database + Text File backup)
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
     c.execute("INSERT INTO users (telegram_id, uid, status) VALUES (?, '', 'active') ON CONFLICT(telegram_id) DO UPDATE SET status='active'", (user_id,))
     conn.commit()
     conn.close()
+
+    # Backup text file me entry karein agar pehle se nahi hai
+    is_new = True
+    if os.path.exists("backup_users.txt"):
+        with open("backup_users.txt", "r") as f:
+            if str(user_id) in f.read():
+                is_new = False
+                
+    if is_new:
+        with open("backup_users.txt", "a") as f:
+            f.write(f"{user_id},\n")
 
     kb = [[InlineKeyboardButton("📝 Register ID", url=REGISTER_LINK)]]
     await update.message.reply_text(
@@ -56,7 +114,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def uid_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Agar admin kisi ke message par reply kar raha hai, to ise user ki UID na samjhein
+    # Admin reply filter
     if update.effective_user.id == ADMIN_ID and update.message.reply_to_message:
         await handle_admin_reply(update, context)
         return
@@ -69,6 +127,17 @@ async def uid_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("INSERT INTO users (telegram_id, uid, status) VALUES (?, ?, 'active') ON CONFLICT(telegram_id) DO UPDATE SET uid=?, status='active'", (user.id, uid, uid))
     conn.commit()
     conn.close()
+
+    # Text backup me UID update karne ka logic
+    if os.path.exists("backup_users.txt"):
+        with open("backup_users.txt", "r") as f:
+            lines = f.readlines()
+        with open("backup_users.txt", "w") as f:
+            for line in lines:
+                if line.startswith(f"{user.id},"):
+                    f.write(f"{user.id},{uid}\n")
+                else:
+                    f.write(line)
 
     context.user_data["user_uid"] = uid
     await update.message.reply_text("✅ UID Saved Successfully.")
@@ -92,7 +161,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await q.message.reply_text(f"🎁 Selected ₹{amt}\n\nAapka request admin ke paas bhej diya gaya hai!")
 
-        # Admin ko alert text bhejte hain jisme user ki internal Telegram ID chhupi hogi (For Reply feature)
         try:
             await context.bot.send_message(
                 ADMIN_ID,
@@ -107,14 +175,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-# ---------------- ADMIN EXCLUSIVE FEATURES ----------------
+# ---------------- ADMIN FEATURES ----------------
 
-# 1. Easy Reply Feature: Admin kisi bhi message par Telegram ka official 'Reply' use karega
 async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_to = update.message.reply_to_message
     reply_text = update.message.text
     
-    # Reply text me se user ki Telegram ID dhoondhte hain
     target_user_id = None
     try:
         if "Telegram ID:" in reply_to.text:
@@ -130,49 +196,40 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await context.bot.send_message(target_user_id, f"💬 *Admin Reply:*\n\n{reply_text}", parse_mode="Markdown")
             await update.message.reply_text("✅ Message user tak pahunch gaya!")
         except TelegramError as e:
-            await update.message.reply_text(f"❌ Message nahi bheja ja saka. Shayad user ne bot block kiya hai. Error: {e}")
+            await update.message.reply_text(f"❌ Message nahi bheja ja saka: {e}")
     else:
-        await update.message.reply_text("❌ Main user ki Telegram ID nahi dhoondh paya. Kripya naye request format par hi reply karein.")
+        await update.message.reply_text("❌ Main user ki Telegram ID nahi dhoondh paya.")
 
-# 2. Live Stats Dashboard (/stats)
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
         
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
-    
     c.execute("SELECT COUNT(*) FROM users")
     total = c.fetchone()[0]
-    
     c.execute("SELECT COUNT(*) FROM users WHERE status='active'")
     active = c.fetchone()[0]
-    
     c.execute("SELECT COUNT(*) FROM users WHERE status='blocked'")
     blocked = c.fetchone()[0]
-    
     conn.close()
     
     dashboard = (
-        "📊 *ADMIN DASHBOARD*\n\n"
-        f"👥 Total Members: `{total}`\n"
+        "📊 *LIVE ADMIN DASHBOARD*\n\n"
+        f"👥 Total Backup Members: `{total}`\n"
         f"🟢 Active Members: `{active}`\n"
         f"🔴 Blocked Members: `{blocked}`\n\n"
-        f"ℹ️ _Note: Jab aap broadcast karenge, tab blocked list automatic update ho jayegi._"
+        f"🚀 _Anti-Sleep System Running: True_"
     )
     await update.message.reply_text(dashboard, parse_mode="Markdown")
 
-# 3. All-Media Broadcast Command (/broadcast)
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    # Check karein ki admin ne kisi photo/video/voice message ke sath /broadcast likha hai ya nahi
     msg = update.message
-    has_media = False
     media_type = None
     
-    # Check media type
     if msg.reply_to_message:
         target_msg = msg.reply_to_message
     else:
@@ -194,7 +251,6 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = target_msg.audio.file_id
         caption = target_msg.caption or ""
     else:
-        # Simple text broadcast ke liye command ke aage ka text check karein
         if msg.text.startswith("/broadcast "):
             media_type = "text"
             text_to_send = msg.text.replace("/broadcast ", "", 1)
@@ -202,15 +258,10 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             media_type = "text"
             text_to_send = msg.reply_to_message.text
         else:
-            await update.message.reply_text(
-                "❌ *Galat Tarika!*\n\n"
-                "1. Normal Text ke liye likhein: `/broadcast Hello Users`\n"
-                "2. Photo/Video/Voice bhejne ke liye, use upload karein aur caption me likhein `/broadcast` ya us par reply karke `/broadcast` likhein.",
-                parse_mode="Markdown"
-            )
+            await update.message.reply_text("❌ *Format Galat Hai!* Use: `/broadcast text` ya kisi media par reply karke `/broadcast` likhein.")
             return
 
-    await update.message.reply_text("⏳ Broadcast shuru ho raha hai... Sabhi users ko bheja ja raha hai.")
+    await update.message.reply_text("⏳ Broadcast shuru ho raha hai... Sabhi purane aur naye users ko bheja ja raha hai.")
 
     conn = sqlite3.connect("bot.db")
     c = conn.cursor()
@@ -234,15 +285,12 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif media_type == "audio":
                 await context.bot.send_audio(chat_id=tid, audio=file_id, caption=caption)
             
-            # Agar successfully chala gaya to active mark karein
             c.execute("UPDATE users SET status='active' WHERE telegram_id=?", (tid,))
             success += 1
-        except TelegramError as e:
-            # Agar bot block ho chuka hai, to status update karein
+        except TelegramError:
             c.execute("UPDATE users SET status='blocked' WHERE telegram_id=?", (tid,))
             failed_blocked += 1
         
-        # Rate limit se bachne ke liye chota sa pause
         await asyncio.sleep(0.05)
 
     conn.commit()
@@ -250,24 +298,24 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"📢 *Broadcast Completed!*\n\n"
-        f"✅ Safalta se bheja: `{success}` users ko\n"
-        f"❌ Blocked/Failed mila: `{failed_blocked}` users",
+        f"✅ Total Sent: `{success}`\n"
+        f"❌ Blocked/Failed: `{failed_blocked}`",
         parse_mode="Markdown"
     )
 
 def main():
     init_db()
     threading.Thread(target=run_flask, daemon=True).start()
+    
+    # Anti-sleep ping thread ko piche background me chalayein
+    threading.Thread(target=ping_server, daemon=True).start()
 
     bot_app = ApplicationBuilder().token(TOKEN).build()
     
-    # Base Handlers
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(CommandHandler("stats", stats))
     bot_app.add_handler(CommandHandler("broadcast", broadcast))
     bot_app.add_handler(CallbackQueryHandler(buttons))
-    
-    # Catch-all message handler text/media ke liye
     bot_app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, uid_handler))
     
     bot_app.run_polling()
